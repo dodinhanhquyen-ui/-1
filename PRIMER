@@ -1,5 +1,3 @@
-这份代码是对目前nature里一篇降水领域的数据融合的代码复现，先记录一下自己学到的内容。
-
 #环境初始化：管理-数据-变量-执行
 from    ml_collections  import  ConfigDict  #type:ignore
 import  numpy   as  np
