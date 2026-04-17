@@ -37,6 +37,11 @@ rmse = np.sqrt(mean_squared_error(y_test, y_pred)) #计算RMSE均方根误差，
 mae = mean_absolute_error(y_test, y_pred) #计算MAE平均绝对误差，就是预测值和真实值差的平均值，直观易懂
 cc = np.corrcoef(y_test.flatten(), y_pred.flatten())[0, 1] #计算相关稀疏CC，衡量预测值和真实值的线性相关程度，值域是-1到1，越接近1说明预测趋势越准确。.flatten()是把二维数据拉成一维方便计算，【0,1】是取相关系数矩阵里的对角线外元素
 
+print(f'RMSE: {rmse:.4f}') #f'……'表示字符串可以嵌入变量；{rmse}表示把rmse这个变量插入字符串;4f表示保留四位有效数字
+print(f'MAE:  {mae:.4f}')
+print(f'CC:   {cc:.4f}')
+#通过把评估结果打印出来可视化评估模型训练成果
+
 #第七部分：可视化
 plt.figure(figsize=(12, 4)) #创建一个宽12高4的画布
 
