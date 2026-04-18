@@ -1,0 +1,101 @@
+#第一部分：引入库
+import numpy as np
+import torch #之前两个方法用的是scikit-learn,这里开始换成PyTorch，因为PyTorch可以更灵活地搭建网络结构
+import torch.nn as nn #torch.nn是PyTorch里面专门搭建神经网路的模块
+from torch.utils.data import DataLoader, TensorDataset #DataLoader, TensorDataset是负责喂数据的工具
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+
+# 第二部分：加载数据（需要修改的地方）
+era5   = np.load(r'data/ERA5_npy/你的文件名.npy')
+hres   = np.load(r'data/HRES/你的文件名.npy')
+imerg  = np.load(r'data/IMERG_npy/你的文件名.npy')
+gauges = np.load(r'data/gauges_npy/你的文件名.npy')
+target = gauges
+
+# 第三部分：数据预处理
+era5_flat  = era5.reshape(era5.shape[0], -1)
+hres_flat  = hres.reshape(hres.shape[0], -1)
+imerg_flat = imerg.reshape(imerg.shape[0], -1)
+X = np.concatenate([era5_flat, hres_flat, imerg_flat], axis=1)
+y = target.reshape(target.shape[0], -1)
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+# 转换成PyTorch的Tensor格式
+X_train_t = torch.FloatTensor(X_train)
+X_test_t  = torch.FloatTensor(X_test)
+y_train_t = torch.FloatTensor(y_train)
+y_test_t  = torch.FloatTensor(y_test)
+
+# 打包成DataLoader，每次喂给模型一小批数据
+train_dataset = TensorDataset(X_train_t, y_train_t) #TensorDataest是把X和Y打包在一起，保证每次取数据的时候X和Y是对应的
+train_loader  = DataLoader(train_dataset, batch_size=32, shuffle=True) #DataLoader负责具体怎么分配，batch_size=32-每次喂32个样本给模型，shuffle=True-每轮训练前把数据顺序打乱，防止模型记住顺序规律
+#与之前一次性把全部数据喂给模型进行训练的方法不同，MLP的方法是分批喂的。
+
+# 第四部分：定义MLP模型结构
+input_size  = X_train.shape[1]   # 输入特征数量
+output_size = y_train.shape[1]   # 输出特征数量
+
+model = nn.Sequential(           #Sequential是顺序容器，意思是数据从上到下依次经过每一层，就像流水线一样
+    nn.Linear(input_size, 512),  # 第一层：输入层→隐藏层。把输入的特征数量压缩成512个神经元，而Linear是全连接层，每个输入和输出之间都有一条连接
+    nn.ReLU(),                   # 激活函数，给网络引入非线性能力。
+    nn.Dropout(0.1),             # 随机丢弃10%防止过拟合，与Random Forest里的max_depth作用类似，都是防止模型把训练数据背下来
+    nn.Linear(512, 256),         # 第二层：隐藏层→隐藏层。把512个神经元压缩到256个。
+    nn.ReLU(),                   # 激活函数
+    nn.Dropout(0.1),             # 随机丢弃10%防止过拟合
+    nn.Linear(256, output_size)  # 第三层：隐藏层→输出层。从256个神经元输出到最终的降水预测值，注意这层没有ReLU，因为降水值时连续数值，不需要激活函数限制输出范围
+)
+
+# 第五部分：训练模型
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001) 
+#优化器，负责根据误差来更新模型的权重。Adam是目前最常用的优化器，可以把它理解为一个智能版的learning_rate，它会根据每个参数的情况自动调整步长。
+#1r=0.001是学习率，和XGBOOST里的learning_rate概念一样，控制每次更新的幅度
+loss_fn   = nn.MSELoss() #损失函数，负责计算预测值和真实值之间的误差。MSE就是均方误差，和之前评估指标里的RMSE是同一个东西，只是没有开根号
+
+for epoch in range(50):                          # 训练50轮。每一轮都把全部数据过一遍，就像做题，做一遍不够，要反复做50遍才能学扎实
+    model.train()                                #把模型切换到训练模式，这样Dropout才会生效，后面评估的时候会切换到model.eval(),Dropout就会关掉
+    for X_batch, y_batch in train_loader:        # 每次取一小批。每次从DataLoader里取32个样本出来，训练一小步。一轮里会取很多次，直到全部数据都过完一遍。
+        optimizer.zero_grad()                    # 清空上一步的梯度。梯度：模型的权重的调整方向与大小调整信息。如果不清空，梯度会一直累加，导致更新方向错误，每次更新前必修清空，就像黑板写满了要先擦出才能继续写。
+
+        y_hat = model(X_batch)                   # 前向传播，得到预测值，数据从输入层流向输出层
+        loss  = loss_fn(y_hat, y_batch)          # 计算误差.计算这批预测值和真实值之间的误差
+        loss.backward()                          # 反向传播，往回计算每个权重对误差的贡献，这一步是神经网络的核心，告诉每个权重你该往哪个方向调整，
+        optimizer.step()                         # 更新权重。前面的backward()只是算出方向，这一步才是真正迈出那一步
+    if (epoch+1) % 10 == 0:
+        print(f'Epoch {epoch+1}/50, Loss: {loss.item():.4f}') #每训练10轮打印依次当前误差，方便你观察模型是否在持续改善。%10==0是判断能否被10整除，也就是第10,20,30,40,50轮的时候打印
+
+# 第六部分：评估
+model.eval()
+with torch.no_grad():
+    y_pred = model(X_test_t).numpy()
+
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+mae  = mean_absolute_error(y_test, y_pred)
+cc   = np.corrcoef(y_test.flatten(), y_pred.flatten())[0, 1]
+
+print(f'RMSE: {rmse:.4f}')
+print(f'MAE:  {mae:.4f}')
+print(f'CC:   {cc:.4f}')
+
+# 第六部分：可视化
+plt.figure(figsize=(12, 4))
+
+plt.subplot(1, 2, 1)
+plt.scatter(y_test.flatten(), y_pred.flatten(), alpha=0.3, s=1)
+plt.xlabel('真实值')
+plt.ylabel('预测值')
+plt.title('MLP：真实值 vs 预测值')
+
+plt.subplot(1, 2, 2)
+plt.plot(y_test[0], label='真实值')
+plt.plot(y_pred[0], label='预测值')
+plt.legend()
+plt.title('第一个样本对比')
+
+#整个训练过程：取一批数据→预测→算误差→反向传播算梯度→更新权重→重复50轮
+plt.tight_layout()
+plt.savefig('mlp_result.png')
+plt.show()
